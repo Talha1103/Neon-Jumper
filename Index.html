@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>NEON ROCKET</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;overflow:hidden;background:black;font-family:'Orbitron',sans-serif}
+canvas{display:block}
+#ui{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.panel{
+ background:rgba(5,8,25,.97);
+ border:4px solid #00f6ff;
+ box-shadow:0 0 60px #00f6ff;
+ padding:40px 55px;
+ text-align:center;
+ pointer-events:auto;
+}
+h1{font-size:56px;margin:0 0 10px;text-shadow:0 0 50px #00f6ff}
+button,select{
+ margin-top:20px;padding:14px 32px;font-size:22px;
+ font-family:'Orbitron',sans-serif;background:black;
+ color:#00f6ff;border:3px solid #00f6ff;cursor:pointer
+}
+button:hover{background:#00f6ff;color:black}
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="ui">
+ <div class="panel" id="menu">
+  <h1>NEON ROCKET</h1>
+  <div style="font-size:24px;color:#00f6ff;text-shadow:0 0 25px #00f6ff">
+   High Score: <span id="hi">0</span>
+  </div>
+  <select id="diff">
+   <option value="easy">Easy</option>
+   <option value="normal" selected>Normal</option>
+   <option value="hard">Hard</option>
+  </select><br>
+  <button onclick="start()">START</button>
+ </div>
+
+ <div class="panel" id="over" style="display:none">
+  <h1>GAME OVER</h1>
+  <div style="font-size:30px">Score: <span id="fs"></span></div>
+  <div style="font-size:24px;color:#00f6ff;text-shadow:0 0 25px #00f6ff">
+   High Score: <span id="fh"></span>
+  </div>
+  <button onclick="reset()">RESTART</button>
+ </div>
+</div>
+
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const menu=document.getElementById("menu"),over=document.getElementById("over");
+const diff=document.getElementById("diff");
+const hiSpan=document.getElementById("hi"),fs=document.getElementById("fs"),fh=document.getElementById("fh");
+
+function resize(){c.width=innerWidth;c.height=innerHeight}
+addEventListener("resize",resize);resize();
+
+let hi=+localStorage.getItem("nr-hi")||0;
+hiSpan.textContent=hi;
+
+let state="menu",score=0,frame=0,shake=0,flash=0;
+const cam=()=>({x:(Math.random()-.5)*shake,y:(Math.random()-.5)*shake});
+
+const stars=[...Array(220)].map(()=>({x:Math.random()*c.width,y:Math.random()*c.height,z:Math.random()*3}));
+
+const r={x:220,y:300,vy:0,a:0,trail:[],dead:false};
+
+let explosions=[];
+let shockwave=null;
+
+let g,t,speed,gap;
+
+// 🔊 AUDIO CONTEXT
+const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+
+function scoreSound(){
+ const o=audioCtx.createOscillator();
+ const g=audioCtx.createGain();
+ o.type="triangle";
+ o.frequency.setValueAtTime(880,audioCtx.currentTime);
+ g.gain.setValueAtTime(.15,audioCtx.currentTime);
+ g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.15);
+ o.connect(g);g.connect(audioCtx.destination);
+ o.start();o.stop(audioCtx.currentTime+.15);
+}
+
+function explodeSound(){
+ const o=audioCtx.createOscillator();
+ const g=audioCtx.createGain();
+ o.type="sawtooth";
+ o.frequency.setValueAtTime(140,audioCtx.currentTime);
+ o.frequency.exponentialRampToValueAtTime(40,audioCtx.currentTime+.4);
+ g.gain.setValueAtTime(.4,audioCtx.currentTime);
+ g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.5);
+ o.connect(g);g.connect(audioCtx.destination);
+ o.start();o.stop(audioCtx.currentTime+.5);
+}
+
+function setDiff(d){
+ if(d==="easy"){g=.45;t=-7.5;speed=4;gap=260}
+ if(d==="normal"){g=.65;t=-9;speed=6;gap=220}
+ if(d==="hard"){g=.9;t=-11;speed=8;gap=180}
+}
+
+let pipes=[];
+function addPipe(){
+ pipes.push({x:c.width+160,top:Math.random()*(c.height-gap-260)+130,pass:false});
+}
+
+addEventListener("keydown",e=>e.code==="Space"&&jump());
+addEventListener("mousedown",jump);
+function jump(){if(state==="play"){audioCtx.resume();r.vy=t}}
+
+function start(){
+ audioCtx.resume();
+ setDiff(diff.value);
+ state="play";score=0;frame=0;pipes=[];
+ r.y=c.height/2;r.vy=0;r.trail=[];r.dead=false;
+ explosions=[];shockwave=null;
+ menu.style.display="none";
+}
+
+function reset(){
+ over.style.display="none";
+ menu.style.display="block";
+ state="menu";
+}
+
+function die(){
+ if(state!=="play")return;
+ state="dead";
+ r.dead=true;
+ shake=45;
+ flash=1;
+ explodeSound();
+
+ shockwave={x:r.x,y:r.y,r:10,a:1};
+
+ for(let i=0;i<50;i++){
+  explosions.push({
+   x:r.x,y:r.y,
+   vx:(Math.random()-.5)*12,
+   vy:(Math.random()-.5)*12,
+   life:30
+  });
+ }
+
+ if(score>hi){
+  hi=score;
+  localStorage.setItem("nr-hi",hi);
+  hiSpan.textContent=hi;
+ }
+
+ setTimeout(()=>{
+  fs.textContent=score;
+  fh.textContent=hi;
+  over.style.display="block";
+ },900);
+}
+
+function drawSpace(){
+ ctx.fillStyle="#05071a";
+ ctx.fillRect(0,0,c.width,c.height);
+ for(const s of stars){
+  s.x-=speed*(s.z+.5)*.15;
+  if(s.x<0)s.x=c.width;
+  ctx.fillStyle=`rgba(255,255,255,${.3+.3*s.z})`;
+  ctx.fillRect(s.x,s.y,1+s.z,1+s.z);
+ }
+}
+
+function drawPipes(){
+ ctx.shadowColor="#00f6ff";
+ ctx.shadowBlur=20;
+ for(const p of pipes){
+  ctx.fillStyle="#151a2e";
+  ctx.fillRect(p.x,0,120,p.top);
+  ctx.fillRect(p.x,p.top+gap,120,c.height);
+  ctx.fillStyle="#00f6ff";
+  ctx.fillRect(p.x+102,0,10,p.top);
+  ctx.fillRect(p.x+102,p.top+gap,10,c.height);
+ }
+ ctx.shadowBlur=0;
+}
+
+function drawRocket(){
+ r.trail.unshift({x:r.x-25,y:r.y});
+ if(r.trail.length>30)r.trail.pop();
+
+ for(let i=1;i<r.trail.length;i++){
+  const a=r.trail[i-1],b=r.trail[i];
+  b.x-=speed*1.2;
+  ctx.strokeStyle=`rgba(255,230,0,${1-i/30})`;
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(a.x,a.y);
+  ctx.lineTo(b.x,b.y);
+  ctx.stroke();
+ }
+
+ ctx.save();
+ ctx.translate(r.x,r.y);
+ ctx.rotate(r.a);
+ ctx.fillStyle="#ffe600";
+ ctx.shadowColor="#ffe600";
+ ctx.shadowBlur=45;
+ ctx.beginPath();
+ ctx.moveTo(-18,-10);
+ ctx.lineTo(10,-18);
+ ctx.lineTo(32,0);
+ ctx.lineTo(10,18);
+ ctx.lineTo(-18,10);
+ ctx.lineTo(-6,0);
+ ctx.closePath();
+ ctx.fill();
+ ctx.restore();
+}
+
+function drawExplosion(){
+ for(const e of explosions){
+  ctx.fillStyle="orange";
+  ctx.beginPath();
+  ctx.arc(e.x,e.y,6,0,Math.PI*2);
+  ctx.fill();
+  e.x+=e.vx;
+  e.y+=e.vy;
+  e.life--;
+ }
+ explosions=explosions.filter(e=>e.life>0);
+}
+
+function drawShockwave(){
+ if(!shockwave)return;
+ ctx.strokeStyle=`rgba(255,255,255,${shockwave.a})`;
+ ctx.lineWidth=4;
+ ctx.beginPath();
+ ctx.arc(shockwave.x,shockwave.y,shockwave.r,0,Math.PI*2);
+ ctx.stroke();
+ shockwave.r+=18;
+ shockwave.a-=.04;
+ if(shockwave.a<=0)shockwave=null;
+}
+
+function loop(){
+ ctx.clearRect(0,0,c.width,c.height);
+ const o=cam();ctx.save();ctx.translate(o.x,o.y);
+
+ drawSpace();
+
+ if(state==="play"){
+  frame++;
+  r.vy+=g;
+  r.y+=r.vy;
+  r.a+=(r.vy/10-r.a)*.12;
+
+  if(frame%90===0)addPipe();
+
+  for(const p of pipes){
+   p.x-=speed;
+   if(!p.pass&&p.x+120<r.x){
+    p.pass=true;
+    score++;
+    scoreSound();
+   }
+   if(r.x+22>p.x&&r.x-22<p.x+120&&(r.y<p.top||r.y>p.top+gap))die();
+  }
+  pipes=pipes.filter(p=>p.x>-180);
+  if(r.y<0||r.y>c.height)die();
+ }
+
+ drawPipes();
+ drawExplosion();
+ drawShockwave();
+ if(!r.dead)drawRocket();
+
+ if(state==="play"){
+  ctx.fillStyle="#fff";
+  ctx.font="48px Orbitron";
+  ctx.fillText(score,c.width/2-12,70);
+ }
+
+ if(flash>0){
+  ctx.fillStyle=`rgba(255,255,255,${flash})`;
+  ctx.fillRect(-50,-50,c.width+100,c.height+100);
+  flash-=.08;
+ }
+
+ ctx.restore();
+ shake=Math.max(0,shake-1);
+ requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
